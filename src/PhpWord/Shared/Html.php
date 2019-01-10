@@ -23,7 +23,6 @@ use PhpOffice\PhpWord\Element\Table;
 use PhpOffice\PhpWord\Settings;
 use PhpOffice\PhpWord\SimpleType\Jc;
 use PhpOffice\PhpWord\SimpleType\NumberFormat;
-use PhpOffice\PhpWord\Style\Paragraph;
 
 /**
  * Common Html functions
@@ -132,7 +131,7 @@ class Html
 
         // Node mapping table
         $nodes = array(
-                              // $method        $node   $element    $styles     $data   $argument1      $argument2
+            // $method        $node   $element    $styles     $data   $argument1      $argument2
             'p'         => array('Paragraph',   $node,  $element,   $styles,    null,   null,           null),
             'h1'        => array('Heading',     null,   $element,   $styles,    null,   'Heading1',     null),
             'h2'        => array('Heading',     null,   $element,   $styles,    null,   'Heading2',     null),
@@ -164,6 +163,10 @@ class Html
 
         $newElement = null;
         $keys = array('node', 'element', 'styles', 'data', 'argument1', 'argument2');
+
+        if($node->nodeName == 'img') {
+            echo("NODE: " . $node->nodeName . " : " . $node->textContent . "\n");
+        }
 
         if (isset($nodes[$node->nodeName])) {
             // Execute method based on node mapping table and return $newElement or null
@@ -515,9 +518,6 @@ class Html
                 case 'text-align':
                     $styles['alignment'] = self::mapAlign($cValue);
                     break;
-                case 'display':
-                    $styles['hidden'] = $cValue === 'none';
-                    break;
                 case 'direction':
                     $styles['rtl'] = $cValue === 'rtl';
                     break;
@@ -535,27 +535,18 @@ class Html
                     $styles['bgColor'] = trim($cValue, '#');
                     break;
                 case 'line-height':
-                    $matches = array();
                     if (preg_match('/([0-9]+\.?[0-9]*[a-z]+)/', $cValue, $matches)) {
-                        //matches number with a unit, e.g. 12px, 15pt, 20mm, ...
                         $spacingLineRule = \PhpOffice\PhpWord\SimpleType\LineSpacingRule::EXACT;
-                        $spacing = Converter::cssToTwip($matches[1]);
+                        $spacing = Converter::cssToTwip($matches[1]) / \PhpOffice\PhpWord\Style\Paragraph::LINE_HEIGHT;
                     } elseif (preg_match('/([0-9]+)%/', $cValue, $matches)) {
-                        //matches percentages
                         $spacingLineRule = \PhpOffice\PhpWord\SimpleType\LineSpacingRule::AUTO;
-                        //we are subtracting 1 line height because the Spacing writer is adding one line
-                        $spacing = ((((int) $matches[1]) / 100) * Paragraph::LINE_HEIGHT) - Paragraph::LINE_HEIGHT;
+                        $spacing = ((int) $matches[1]) / 100;
                     } else {
-                        //any other, wich is a multiplier. E.g. 1.2
                         $spacingLineRule = \PhpOffice\PhpWord\SimpleType\LineSpacingRule::AUTO;
-                        //we are subtracting 1 line height because the Spacing writer is adding one line
-                        $spacing = ($cValue * Paragraph::LINE_HEIGHT) - Paragraph::LINE_HEIGHT;
+                        $spacing = $cValue;
                     }
                     $styles['spacingLineRule'] = $spacingLineRule;
-                    $styles['line-spacing'] = $spacing;
-                    break;
-                case 'letter-spacing':
-                    $styles['letter-spacing'] = Converter::cssToTwip($cValue);
+                    $styles['lineHeight'] = $spacing;
                     break;
                 case 'text-indent':
                     $styles['indentation']['firstLine'] = Converter::cssToTwip($cValue);
@@ -669,6 +660,7 @@ class Html
                     break;
             }
         }
+        echo("Parsing " . $src . "\n");
         $originSrc = $src;
         if (strpos($src, 'data:image') !== false) {
             $tmpDir = Settings::getTempDir() . '/';
@@ -685,12 +677,17 @@ class Html
                 fclose($ifp);
             }
         }
-        $src = urldecode($src);
+
+        /**
+         * Dropped url_decode() as it did not handle %20, etc. very well.
+         */
+        $src = self::escapefile_url($src);
 
         if (!is_file($src)
             && !is_null(self::$options)
             && isset(self::$options['IMG_SRC_SEARCH'])
             && isset(self::$options['IMG_SRC_REPLACE'])) {
+
             $src = str_replace(self::$options['IMG_SRC_SEARCH'], self::$options['IMG_SRC_REPLACE'], $src);
         }
 
@@ -713,10 +710,28 @@ class Html
         if (is_file($src)) {
             $newElement = $element->addImage($src, $style);
         } else {
+            echo("Unable to load image: " . $originSrc . "\n");
             throw new \Exception("Could not load image $originSrc");
         }
 
         return $newElement;
+    }
+
+    /**
+     * Lifted from https://stackoverflow.com/questions/38639107/file-get-contents-false-when-url-have-spaces-encode-everything-not-working/38639203
+     *
+     * @param $url
+     * @return string
+     */
+    private function escapefile_url($url){
+        $parts = parse_url($url);
+        $path_parts = array_map('rawurldecode', explode('/', $parts['path']));
+
+        return
+            $parts['scheme'] . '://' .
+            $parts['host'] .
+            implode('/', array_map('rawurlencode', $path_parts))
+            ;
     }
 
     /**
@@ -756,6 +771,8 @@ class Html
             default:
                 return Jc::START;
         }
+
+        return null;
     }
 
     /**
